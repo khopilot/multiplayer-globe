@@ -1,18 +1,13 @@
 {
-  "compatibility_date": "2025-04-01",
+  "compatibility_date": "2024-11-06",
+  "compatibility_flags": ["nodejs_compat"],
   "main": "src/server/index.ts",
   "name": "multiplayer-globe",
-  "migrations": [
-    {
-      "new_sqlite_classes": ["Globe"],
-      "tag": "v1"
-    }
-  ],
   "assets": {
     "directory": "public"
   },
   "build": {
-    "command": "npx esbuild src/client/index.tsx --bundle --outdir=public/dist --splitting --sourcemap --format=esm"
+    "command": "npx esbuild src/client/index.tsx --bundle --outdir=public/dist --splitting --sourcemap --format=esm --loader:.png=dataurl --loader:.svg=dataurl"
   },
   "durable_objects": {
     "bindings": [

@@ -1,11 +1,11 @@
 import { routePartykitRequest, Server } from "partyserver";
 
-import type { OutgoingMessage, Position } from "../shared";
+import type { OutgoingMessage, Position, DebtorInfo } from "../shared";
 import type { Connection, ConnectionContext } from "partyserver";
 
 // This is the state that we'll store on each connection
 type ConnectionState = {
-  position: Position;
+  debtor: DebtorInfo;
 };
 
 export class Globe extends Server {
@@ -13,21 +13,58 @@ export class Globe extends Server {
     // Whenever a fresh connection is made, we'll
     // send the entire state to the new connection
 
-    // First, let's extract the position from the Cloudflare headers
-    const latitude = ctx.request.cf?.latitude as string | undefined;
-    const longitude = ctx.request.cf?.longitude as string | undefined;
+    // First, try to get position from query parameters (real GPS coordinates)
+    const url = new URL(ctx.request.url);
+    const queryLat = url.searchParams.get("lat");
+    const queryLng = url.searchParams.get("lng");
+    
+    let latitude: string | undefined;
+    let longitude: string | undefined;
+    
+    if (queryLat && queryLng) {
+      // Use precise GPS coordinates from client
+      latitude = queryLat;
+      longitude = queryLng;
+      console.log(`Using precise GPS coordinates for connection ${conn.id}: ${latitude}, ${longitude}`);
+    } else {
+      // Fallback to Cloudflare IP-based location
+      latitude = ctx.request.cf?.latitude as string | undefined;
+      longitude = ctx.request.cf?.longitude as string | undefined;
+      console.log(`Using IP-based coordinates for connection ${conn.id}: ${latitude}, ${longitude}`);
+    }
+    
     if (!latitude || !longitude) {
       console.warn(`Missing position information for connection ${conn.id}`);
+      conn.send(JSON.stringify({ 
+        type: "error", 
+        message: "GPS position required to use this application" 
+      }));
+      conn.close();
       return;
     }
-    const position = {
+    
+    const position: Position = {
       lat: parseFloat(latitude),
       lng: parseFloat(longitude),
       id: conn.id,
     };
+    
+    // Create debtor info with sample data (in real app, this would come from a database)
+    const debtorInfo: DebtorInfo = {
+      position,
+      loanAmount: Math.floor(Math.random() * 5000) + 500, // Random loan between $500-$5500
+      outstandingBalance: Math.floor(Math.random() * 5000) + 100,
+      missedPayments: Math.floor(Math.random() * 5),
+      dueDate: new Date(Date.now() + Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
+      interestRate: 5 + Math.random() * 10, // 5-15% interest
+      status: Math.random() > 0.7 ? 'defaulted' : 'active',
+      name: `Debtor ${conn.id.slice(0, 6)}`,
+      phoneNumber: `+855 ${Math.floor(Math.random() * 90000000 + 10000000)}` // Cambodia phone
+    };
+    
     // And save this on the connection's state
     conn.setState({
-      position,
+      debtor: debtorInfo,
     });
 
     // Now, let's send the entire state to the new connection
@@ -35,18 +72,18 @@ export class Globe extends Server {
       try {
         conn.send(
           JSON.stringify({
-            type: "add-marker",
+            type: "add-debtor",
             // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            position: connection.state!.position,
+            debtor: connection.state!.debtor,
           } satisfies OutgoingMessage),
         );
 
-        // And let's send the new connection's position to all other connections
+        // And let's send the new connection's debtor info to all other connections
         if (connection.id !== conn.id) {
           connection.send(
             JSON.stringify({
-              type: "add-marker",
-              position,
+              type: "add-debtor",
+              debtor: debtorInfo,
             } satisfies OutgoingMessage),
           );
         }
@@ -61,7 +98,7 @@ export class Globe extends Server {
   onCloseOrError(connection: Connection) {
     this.broadcast(
       JSON.stringify({
-        type: "remove-marker",
+        type: "remove-debtor",
         id: connection.id,
       } satisfies OutgoingMessage),
       [connection.id],

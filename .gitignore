@@ -1,5 +1,4 @@
-# Created by https://www.toptal.com/developers/gitignore/api/node,macos
-# Edit at https://www.toptal.com/developers/gitignore?templates=node,macos
+# Node.js & macOS gitignore
 
 ### macOS ###
 # General
@@ -74,9 +73,7 @@ build/Release
 node_modules/
 jspm_packages/
 
-# Moved from ./templates for ignoring all locks in templates
-templates/**/*-lock.*
-templates/**/*.lock
+
 
 # Snowpack dependency directory (https://snowpack.dev/)
 web_modules/
