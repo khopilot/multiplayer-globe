@@ -128,20 +128,6 @@ function App() {
       <div className="permission-screen">
         <div className="permission-content">
           <h1>💀 Bones Locator</h1>
-          <p className="permission-description">
-            This application requires access to your GPS location to track debtors
-            and manage loan repayments in Cambodia 🇰🇭
-          </p>
-          
-          <div className="permission-info">
-            <h3>Why do we need your location?</h3>
-            <ul>
-              <li>📍 To display your exact position</li>
-              <li>💰 To locate nearby debtors</li>
-              <li>🔒 Your data remains private and secure</li>
-              <li>🇰🇭 Optimized for Cambodia</li>
-            </ul>
-          </div>
 
           {permissionError && (
             <div className="permission-error">
