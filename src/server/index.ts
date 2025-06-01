@@ -5,18 +5,22 @@ import type { Connection, ConnectionContext } from "partyserver";
 
 // This is the state that we'll store on each connection
 type ConnectionState = {
-  debtor: DebtorInfo;
+  userId: string;
+  connectionId: string;
 };
 
 export class Globe extends Server {
-  onConnect(conn: Connection<ConnectionState>, ctx: ConnectionContext) {
-    // Whenever a fresh connection is made, we'll
-    // send the entire state to the new connection
+  // Map to track active debtors by userId
+  private debtors = new Map<string, DebtorInfo>();
+  // Map to track connections per userId
+  private userConnections = new Map<string, Set<string>>();
 
+  onConnect(conn: Connection<ConnectionState>, ctx: ConnectionContext) {
     // First, try to get position from query parameters (real GPS coordinates)
     const url = new URL(ctx.request.url);
     const queryLat = url.searchParams.get("lat");
     const queryLng = url.searchParams.get("lng");
+    const userId = url.searchParams.get("userId") || conn.id; // Use persistent userId or fallback to conn.id
     
     let latitude: string | undefined;
     let longitude: string | undefined;
@@ -25,16 +29,16 @@ export class Globe extends Server {
       // Use precise GPS coordinates from client
       latitude = queryLat;
       longitude = queryLng;
-      console.log(`Using precise GPS coordinates for connection ${conn.id}: ${latitude}, ${longitude}`);
+      console.log(`Using precise GPS coordinates for user ${userId}: ${latitude}, ${longitude}`);
     } else {
       // Fallback to Cloudflare IP-based location
       latitude = ctx.request.cf?.latitude as string | undefined;
       longitude = ctx.request.cf?.longitude as string | undefined;
-      console.log(`Using IP-based coordinates for connection ${conn.id}: ${latitude}, ${longitude}`);
+      console.log(`Using IP-based coordinates for user ${userId}: ${latitude}, ${longitude}`);
     }
     
     if (!latitude || !longitude) {
-      console.warn(`Missing position information for connection ${conn.id}`);
+      console.warn(`Missing position information for user ${userId}`);
       conn.send(JSON.stringify({ 
         type: "error", 
         message: "GPS position required to use this application" 
@@ -43,74 +47,111 @@ export class Globe extends Server {
       return;
     }
     
-    const position: Position = {
-      lat: parseFloat(latitude),
-      lng: parseFloat(longitude),
-      id: conn.id,
-    };
-    
-    // Create debtor info with sample data (in real app, this would come from a database)
-    const debtorInfo: DebtorInfo = {
-      position,
-      loanAmount: Math.floor(Math.random() * 5000) + 500, // Random loan between $500-$5500
-      outstandingBalance: Math.floor(Math.random() * 5000) + 100,
-      missedPayments: Math.floor(Math.random() * 5),
-      dueDate: new Date(Date.now() + Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
-      interestRate: 5 + Math.random() * 10, // 5-15% interest
-      status: Math.random() > 0.7 ? 'defaulted' : 'active',
-      name: `Debtor ${conn.id.slice(0, 6)}`,
-      phoneNumber: `+855 ${Math.floor(Math.random() * 90000000 + 10000000)}` // Cambodia phone
-    };
-    
-    // And save this on the connection's state
+    // Save connection state
     conn.setState({
-      debtor: debtorInfo,
+      userId,
+      connectionId: conn.id
     });
 
-    // Now, let's send the entire state to the new connection
-    for (const connection of this.getConnections<ConnectionState>()) {
-      try {
-        conn.send(
-          JSON.stringify({
-            type: "add-debtor",
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            debtor: connection.state!.debtor,
-          } satisfies OutgoingMessage),
-        );
+    // Track this connection for the user
+    if (!this.userConnections.has(userId)) {
+      this.userConnections.set(userId, new Set());
+    }
+    this.userConnections.get(userId)!.add(conn.id);
 
-        // And let's send the new connection's debtor info to all other connections
-        if (connection.id !== conn.id) {
-          connection.send(
+    // Check if this user already exists
+    let debtorInfo = this.debtors.get(userId);
+    
+    if (!debtorInfo) {
+      // Create new debtor info only if user doesn't exist
+      const position: Position = {
+        lat: parseFloat(latitude),
+        lng: parseFloat(longitude),
+        id: userId, // Use userId instead of conn.id
+      };
+      
+      debtorInfo = {
+        position,
+        loanAmount: Math.floor(Math.random() * 5000) + 500,
+        outstandingBalance: Math.floor(Math.random() * 5000) + 100,
+        missedPayments: Math.floor(Math.random() * 5),
+        dueDate: new Date(Date.now() + Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
+        interestRate: 5 + Math.random() * 10,
+        status: Math.random() > 0.7 ? 'defaulted' : 'active',
+        name: `Debtor ${userId.slice(0, 6)}`,
+        phoneNumber: `+855 ${Math.floor(Math.random() * 90000000 + 10000000)}`
+      };
+      
+      this.debtors.set(userId, debtorInfo);
+      
+      // Broadcast new debtor to all connections
+      this.broadcast(
+        JSON.stringify({
+          type: "add-debtor",
+          debtor: debtorInfo,
+        } satisfies OutgoingMessage)
+      );
+    } else {
+      // Update position for existing debtor
+      debtorInfo.position.lat = parseFloat(latitude);
+      debtorInfo.position.lng = parseFloat(longitude);
+      
+      // Send current state to new connection
+      conn.send(
+        JSON.stringify({
+          type: "add-debtor",
+          debtor: debtorInfo,
+        } satisfies OutgoingMessage)
+      );
+      
+      // Send all other debtors to new connection
+      for (const [otherUserId, otherDebtor] of this.debtors) {
+        if (otherUserId !== userId) {
+          conn.send(
             JSON.stringify({
               type: "add-debtor",
-              debtor: debtorInfo,
-            } satisfies OutgoingMessage),
+              debtor: otherDebtor,
+            } satisfies OutgoingMessage)
           );
         }
-      } catch {
-        this.onCloseOrError(conn);
       }
     }
   }
 
-  // Whenever a connection closes (or errors), we'll broadcast a message to all
-  // other connections to remove the marker.
-  onCloseOrError(connection: Connection) {
-    this.broadcast(
-      JSON.stringify({
-        type: "remove-debtor",
-        id: connection.id,
-      } satisfies OutgoingMessage),
-      [connection.id],
-    );
+  onClose(connection: Connection<ConnectionState>): void | Promise<void> {
+    this.handleDisconnect(connection);
   }
 
-  onClose(connection: Connection): void | Promise<void> {
-    this.onCloseOrError(connection);
+  onError(connection: Connection<ConnectionState>): void | Promise<void> {
+    this.handleDisconnect(connection);
   }
 
-  onError(connection: Connection): void | Promise<void> {
-    this.onCloseOrError(connection);
+  private handleDisconnect(connection: Connection<ConnectionState>) {
+    const state = connection.state;
+    if (!state) return;
+    
+    const { userId, connectionId } = state;
+    
+    // Remove this connection from user's connections
+    const userConns = this.userConnections.get(userId);
+    if (userConns) {
+      userConns.delete(connectionId);
+      
+      // Only remove debtor if this was the last connection for this user
+      if (userConns.size === 0) {
+        this.userConnections.delete(userId);
+        this.debtors.delete(userId);
+        
+        // Broadcast removal only when last connection closes
+        this.broadcast(
+          JSON.stringify({
+            type: "remove-debtor",
+            id: userId,
+          } satisfies OutgoingMessage),
+          [connectionId]
+        );
+      }
+    }
   }
 }
 
@@ -122,3 +163,4 @@ export default {
     );
   },
 } satisfies ExportedHandler<Env>;
+

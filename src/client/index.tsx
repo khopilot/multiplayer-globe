@@ -74,6 +74,20 @@ function MapUpdater({ center }: { center: [number, number] }) {
   return null;
 }
 
+// Generate or get persistent user ID
+function getPersistentUserId(): string {
+  const STORAGE_KEY = 'bones_locator_user_id';
+  let userId = localStorage.getItem(STORAGE_KEY);
+  
+  if (!userId) {
+    // Generate a new UUID-like ID
+    userId = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem(STORAGE_KEY, userId);
+  }
+  
+  return userId;
+}
+
 function App() {
   // State for geolocation permission
   const [hasPermission, setHasPermission] = useState(false);
@@ -81,6 +95,7 @@ function App() {
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [viewMode, setViewMode] = useState<'globe' | 'map'>('globe');
+  const [userId] = useState(getPersistentUserId()); // Get persistent user ID
 
   // Request geolocation permission
   const requestLocationPermission = async () => {
@@ -155,16 +170,17 @@ function App() {
     );
   }
 
-  return <MainView userLocation={userLocation!} viewMode={viewMode} setViewMode={setViewMode} />;
+  return <MainView userLocation={userLocation!} viewMode={viewMode} setViewMode={setViewMode} userId={userId} />;
 }
 
 interface MainViewProps {
   userLocation: { lat: number; lng: number };
   viewMode: 'globe' | 'map';
   setViewMode: (mode: 'globe' | 'map') => void;
+  userId: string;
 }
 
-function MainView({ userLocation, viewMode, setViewMode }: MainViewProps) {
+function MainView({ userLocation, viewMode, setViewMode, userId }: MainViewProps) {
   // A reference to the canvas element where we'll render the globe
   const canvasRef = useRef<HTMLCanvasElement>();
   // The number of markers we're currently displaying
@@ -188,7 +204,8 @@ function MainView({ userLocation, viewMode, setViewMode }: MainViewProps) {
     party: "globe",
     query: {
       lat: userLocation.lat.toString(),
-      lng: userLocation.lng.toString()
+      lng: userLocation.lng.toString(),
+      userId: userId // Send persistent user ID
     },
     onMessage(evt) {
       const message = JSON.parse(evt.data as string) as OutgoingMessage;
